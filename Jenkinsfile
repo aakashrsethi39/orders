@@ -80,6 +80,8 @@ spec:
                             echo "Checking out Orders Repository"
                             echo "======================================"
 
+                            rm -rf orders-source
+
                             git clone \
                               https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/aakashrsethi39/orders.git \
                               orders-source
@@ -121,13 +123,11 @@ spec:
                             echo ""
                             echo "Validating application..."
 
-                            # -B prevents Python from creating __pycache__
                             python -B -m py_compile app.py
 
                             echo ""
                             echo "Python validation successful"
 
-                            # Extra cleanup protection
                             rm -rf __pycache__ 2>/dev/null || true
 
                             echo "======================================"
@@ -222,7 +222,6 @@ spec:
                             python - <<'PY'
 from pathlib import Path
 import os
-import re
 
 file = Path("environments/production/orders-values.yaml")
 
@@ -230,15 +229,30 @@ content = file.read_text()
 
 new_tag = os.environ["IMAGE_TAG"]
 
-content = re.sub(
-    r'(^\\s*tag:\\s*)["\\'']?[^"\\'']+["\\'']?',
-    rf'\\1"{new_tag}"',
-    content,
-    count=1,
-    flags=re.MULTILINE
-)
+lines = content.splitlines()
 
-file.write_text(content)
+inside_image = False
+updated = False
+
+for i, line in enumerate(lines):
+
+    if line.strip() == "image:":
+        inside_image = True
+        continue
+
+    if inside_image and line.strip().startswith("tag:"):
+        indentation = line[:len(line) - len(line.lstrip())]
+        lines[i] = f'{indentation}tag: "{new_tag}"'
+        updated = True
+        break
+
+    if inside_image and line and not line.startswith(" "):
+        inside_image = False
+
+if not updated:
+    raise SystemExit("ERROR: image tag was not found")
+
+file.write_text("\\n".join(lines) + "\\n")
 PY
 
                             echo ""
@@ -361,4 +375,3 @@ PY
         }
     }
 }
-
