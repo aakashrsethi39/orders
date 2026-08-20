@@ -10,7 +10,6 @@ kind: Pod
 spec:
   containers:
 
-    # Python container
     - name: python
       image: python:3.12-slim
       command:
@@ -22,7 +21,6 @@ spec:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
 
-    # Kaniko container
     - name: kaniko
       image: gcr.io/kaniko-project/executor:debug
       command:
@@ -35,7 +33,6 @@ spec:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
 
-    # Git container
     - name: git
       image: alpine/git:latest
       command:
@@ -50,10 +47,16 @@ spec:
         }
     }
 
+    options {
+        skipDefaultCheckout(true)
+    }
+
     environment {
         AWS_REGION = 'ap-south-1'
+
         ECR_REGISTRY = '482311061933.dkr.ecr.ap-south-1.amazonaws.com'
         ECR_REPOSITORY = 'orders'
+
         IMAGE_TAG = "${BUILD_NUMBER}"
 
         GITOPS_REPO = 'https://github.com/aakashrsethi39/k8s-gitops-config.git'
@@ -62,21 +65,74 @@ spec:
 
     stages {
 
+        stage('Checkout Orders') {
+            steps {
+                container('git') {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'github-token',
+                            usernameVariable: 'GIT_USERNAME',
+                            passwordVariable: 'GIT_PASSWORD'
+                        )
+                    ]) {
+                        sh '''
+                            echo "======================================"
+                            echo "Checking out Orders Repository"
+                            echo "======================================"
+
+                            git clone \
+                              https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/aakashrsethi39/orders.git \
+                              orders-source
+
+                            cd orders-source
+
+                            git checkout main
+
+                            git config --global --add safe.directory "$(pwd)"
+
+                            echo ""
+                            echo "Orders repository:"
+                            git log -1 --oneline
+
+                            echo ""
+                            echo "Application files:"
+                            ls -la
+
+                            echo "======================================"
+                            echo "Orders checkout successful"
+                            echo "======================================"
+                        '''
+                    }
+                }
+            }
+        }
+
         stage('Python Test') {
             steps {
                 container('python') {
-                    sh '''
-                        echo "======================================"
-                        echo "Python Test"
-                        echo "======================================"
+                    dir('orders-source') {
+                        sh '''
+                            echo "======================================"
+                            echo "Python Test"
+                            echo "======================================"
 
-                        python --version
+                            python --version
 
-                        echo "Validating application..."
-                        python -m py_compile app.py
+                            echo ""
+                            echo "Validating application..."
 
-                        echo "Python validation successful"
-                    '''
+                            # -B prevents Python from creating __pycache__
+                            python -B -m py_compile app.py
+
+                            echo ""
+                            echo "Python validation successful"
+
+                            # Extra cleanup protection
+                            rm -rf __pycache__ 2>/dev/null || true
+
+                            echo "======================================"
+                        '''
+                    }
                 }
             }
         }
@@ -84,25 +140,30 @@ spec:
         stage('Build and Push Image') {
             steps {
                 container('kaniko') {
-                    sh '''
-                        echo "======================================"
-                        echo "Building and Pushing Docker Image"
-                        echo "======================================"
+                    dir('orders-source') {
+                        sh '''
+                            echo "======================================"
+                            echo "Building and Pushing Docker Image"
+                            echo "======================================"
 
-                        echo "Image:"
-                        echo "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+                            echo "Image:"
+                            echo "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-                        /kaniko/executor \
-                          --context "${WORKSPACE}" \
-                          --dockerfile "${WORKSPACE}/Dockerfile" \
-                          --destination "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" \
-                          --snapshot-mode=redo \
-                          --use-new-run
+                            echo ""
 
-                        echo "======================================"
-                        echo "Image successfully pushed"
-                        echo "======================================"
-                    '''
+                            /kaniko/executor \
+                              --context "${WORKSPACE}/orders-source" \
+                              --dockerfile "${WORKSPACE}/orders-source/Dockerfile" \
+                              --destination "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" \
+                              --snapshot-mode=redo \
+                              --use-new-run
+
+                            echo ""
+                            echo "======================================"
+                            echo "Image successfully pushed to ECR"
+                            echo "======================================"
+                        '''
+                    }
                 }
             }
         }
@@ -110,40 +171,38 @@ spec:
         stage('Checkout GitOps Repository') {
             steps {
                 container('git') {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'github-token',
+                            usernameVariable: 'GIT_USERNAME',
+                            passwordVariable: 'GIT_PASSWORD'
+                        )
+                    ]) {
+                        sh '''
+                            echo "======================================"
+                            echo "Cloning GitOps Repository"
+                            echo "======================================"
 
-                    // Clean the workspace BEFORE entering gitops directory
-                    deleteDir()
+                            rm -rf gitops
 
-                    dir('gitops') {
+                            git clone \
+                              https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/aakashrsethi39/k8s-gitops-config.git \
+                              gitops
 
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'github-token',
-                                usernameVariable: 'GIT_USERNAME',
-                                passwordVariable: 'GIT_PASSWORD'
-                            )
-                        ]) {
+                            cd gitops
 
-                            sh '''
-                                echo "======================================"
-                                echo "Cloning GitOps Repository"
-                                echo "======================================"
+                            git checkout main
 
-                                git clone \
-                                  https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/aakashrsethi39/k8s-gitops-config.git .
+                            git config --global --add safe.directory "$(pwd)"
 
-                                git checkout main
+                            echo ""
+                            echo "GitOps repository:"
+                            git log -1 --oneline
 
-                                git config --global --add safe.directory "$(pwd)"
-
-                                echo ""
-                                echo "GitOps repository cloned successfully"
-
-                                echo ""
-                                echo "Current Git commit:"
-                                git log -1 --oneline
-                            '''
-                        }
+                            echo ""
+                            echo "GitOps repository checkout successful"
+                            echo "======================================"
+                        '''
                     }
                 }
             }
@@ -152,9 +211,7 @@ spec:
         stage('Update GitOps Image Tag') {
             steps {
                 container('python') {
-
                     dir('gitops') {
-
                         sh '''
                             echo "======================================"
                             echo "Updating GitOps Image Tag"
@@ -190,6 +247,8 @@ PY
                             echo "======================================"
 
                             cat environments/production/orders-values.yaml
+
+                            echo "======================================"
                         '''
                     }
                 }
@@ -199,9 +258,7 @@ PY
         stage('Commit and Push GitOps') {
             steps {
                 container('git') {
-
                     dir('gitops') {
-
                         withCredentials([
                             usernamePassword(
                                 credentialsId: 'github-token',
@@ -209,7 +266,6 @@ PY
                                 passwordVariable: 'GIT_PASSWORD'
                             )
                         ]) {
-
                             sh '''
                                 echo "======================================"
                                 echo "Committing GitOps Change"
@@ -223,7 +279,7 @@ PY
                                 git config user.email "jenkins@localhost"
 
                                 echo ""
-                                echo "Git repository:"
+                                echo "Git status:"
                                 git status
 
                                 echo ""
@@ -237,6 +293,7 @@ PY
                                 git diff --cached --stat
 
                                 if git diff --cached --quiet; then
+                                    echo ""
                                     echo "No changes detected."
                                     exit 0
                                 fi
@@ -283,12 +340,8 @@ PY
 
             echo ""
 
-            echo "GitOps repository:"
-            echo "${GITOPS_REPO}"
-
-            echo ""
-
-            echo "ArgoCD should now detect the GitOps change."
+            echo "Flow completed:"
+            echo "GitHub → Jenkins → ECR → GitOps → Argo CD → EKS"
 
             echo "======================================"
         }
@@ -302,5 +355,22 @@ PY
 
             echo "======================================"
         }
+
+        cleanup {
+            echo "Cleaning Jenkins workspace..."
+
+            script {
+                try {
+                    cleanWs(
+                        deleteDirs: true,
+                        disableDeferredWipeout: true,
+                        notFailBuild: true
+                    )
+                } catch (Exception e) {
+                    echo "Workspace cleanup warning: ${e.message}"
+                }
+            }
+        }
     }
 }
+
