@@ -110,7 +110,12 @@ spec:
         stage('Checkout GitOps Repository') {
             steps {
                 container('git') {
+
+                    // Clean the workspace BEFORE entering gitops directory
+                    deleteDir()
+
                     dir('gitops') {
+
                         withCredentials([
                             usernamePassword(
                                 credentialsId: 'github-token',
@@ -118,12 +123,11 @@ spec:
                                 passwordVariable: 'GIT_PASSWORD'
                             )
                         ]) {
+
                             sh '''
                                 echo "======================================"
                                 echo "Cloning GitOps Repository"
                                 echo "======================================"
-
-                                rm -rf .
 
                                 git clone \
                                   https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/aakashrsethi39/k8s-gitops-config.git .
@@ -132,7 +136,12 @@ spec:
 
                                 git config --global --add safe.directory "$(pwd)"
 
+                                echo ""
                                 echo "GitOps repository cloned successfully"
+
+                                echo ""
+                                echo "Current Git commit:"
+                                git log -1 --oneline
                             '''
                         }
                     }
@@ -143,7 +152,9 @@ spec:
         stage('Update GitOps Image Tag') {
             steps {
                 container('python') {
+
                     dir('gitops') {
+
                         sh '''
                             echo "======================================"
                             echo "Updating GitOps Image Tag"
@@ -188,7 +199,9 @@ PY
         stage('Commit and Push GitOps') {
             steps {
                 container('git') {
+
                     dir('gitops') {
+
                         withCredentials([
                             usernamePassword(
                                 credentialsId: 'github-token',
@@ -196,6 +209,7 @@ PY
                                 passwordVariable: 'GIT_PASSWORD'
                             )
                         ]) {
+
                             sh '''
                                 echo "======================================"
                                 echo "Committing GitOps Change"
@@ -209,7 +223,7 @@ PY
                                 git config user.email "jenkins@localhost"
 
                                 echo ""
-                                echo "Git status:"
+                                echo "Git repository:"
                                 git status
 
                                 echo ""
@@ -230,7 +244,8 @@ PY
                                 echo ""
                                 echo "Creating commit..."
 
-                                git commit -m "Update orders image to ${IMAGE_TAG}"
+                                git commit \
+                                  -m "Update orders image to ${IMAGE_TAG}"
 
                                 echo ""
                                 echo "Pushing GitOps change to GitHub..."
@@ -252,15 +267,29 @@ PY
     }
 
     post {
+
         success {
             echo "======================================"
             echo "PIPELINE SUCCESS"
             echo "======================================"
+
             echo "Application image:"
             echo "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
             echo ""
+
             echo "GitOps image tag:"
             echo "${IMAGE_TAG}"
+
+            echo ""
+
+            echo "GitOps repository:"
+            echo "${GITOPS_REPO}"
+
+            echo ""
+
+            echo "ArgoCD should now detect the GitOps change."
+
             echo "======================================"
         }
 
@@ -268,9 +297,10 @@ PY
             echo "======================================"
             echo "PIPELINE FAILED"
             echo "======================================"
+
             echo "Check the failed stage above."
+
             echo "======================================"
         }
     }
 }
-
