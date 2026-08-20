@@ -357,19 +357,7 @@ PY
         }
 
         cleanup {
-            echo "Cleaning Jenkins workspace..."
-
-            script {
-                try {
-                    cleanWs(
-                        deleteDirs: true,
-                        disableDeferredWipeout: true,
-                        notFailBuild: true
-                    )
-                } catch (Exception e) {
-                    echo "Workspace cleanup warning: ${e.message}"
-                }
-            }
+            echo "Pipeline cleanup completed."
         }
     }
 }
